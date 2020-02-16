@@ -1,96 +1,207 @@
 package main
 
 import (
-	"database/sql"
+	"cloud.google.com/go/firestore"
+	"context"
+	"flag"
 	"fmt"
-	_ "github.com/lib/pq"
 	"log"
 	"time"
+
+	firebase "firebase.google.com/go"
+	"google.golang.org/api/iterator"
 )
 
-type Date struct {
-	year, month, day int
+type Timeslot struct {
+	StartTime time.Time `firestore:"start_time"`
+	EndTime   time.Time `firestore:"end_time"`
+	Activity  string    `firestore:"activity"`
 }
 
-func (date Date) String() string {
-	return fmt.Sprintf("%04d-%02d-%02d", date.year, date.month, date.day)
-}
-
-type Time struct {
-	hours, minutes, seconds int
-}
-
-func (time Time) String() string {
-	return fmt.Sprintf("%02d:%02d:%02d", time.hours, time.minutes, time.seconds)
-}
-
-type Moment struct {
-	date Date
-	time Time
-}
-
-func (m Moment) String() string {
-	return fmt.Sprintf("(%v, %v)", m.date, m.time)
-}
-
-func cleanDB(db *sql.DB) {
-	db.Exec(`DROP TABLE times`)
-	db.Exec(`DROP TYPE moment`)
-}
-
-func initDB(db *sql.DB) {
-	var err error
-	_, err = db.Exec(`CREATE TYPE moment AS (date DATE, time TIME)`)
-	if err != nil {
-		log.Fatal(err)
-	}
-	_, err = db.Exec(`CREATE TABLE times (start_moment moment, ent_moment moment, activity TEXT)`)
-	if err != nil {
-		log.Fatal(err)
-	}
-}
-
-func populateDB(db *sql.DB) {
-	_, err := db.Exec(
-		`INSERT INTO times VALUES ($1, $2, $3)`,
-		Moment{Date{2000, 2, 14}, Time{12, 0, 0}}.String(),
-		Moment{Date{2000, 2, 15}, Time{12, 0, 0}}.String(),
-		"Birth",
-	)
-	if err != nil {
-		log.Fatal(err)
-	}
+func (t Timeslot) String() string {
+	return fmt.Sprintf("%v - %v: %v", t.StartTime, t.EndTime, t.Activity)
 }
 
 func main() {
-	connStr := "user=tracker password=tracker dbname=mydb"
-	db, err := sql.Open("postgres", connStr)
+	ctx := context.Background()
+	conf := &firebase.Config{ProjectID: "go-time-tracker-882c1"}
+	app, err := firebase.NewApp(ctx, conf)
 	if err != nil {
-		log.Fatal("Failed to connect to database:", err)
+		log.Fatalln(err)
 	}
-	defer db.Close()
 
-	err = db.Ping()
+	client, err := app.Firestore(ctx)
 	if err != nil {
-		log.Fatal("Ping failed:", err)
+		log.Fatalln(err)
+	}
+	defer client.Close()
+
+	flag.Parse()
+	fmt.Printf("Number of unused arguments: %v\n", flag.NArg())
+	if len(flag.Args()) < 1 {
+		panic("Too few arguments provided")
 	}
 
-	cleanDB(db)
-	initDB(db)
-	fmt.Println(Moment{Date{2000, 2, 14}, Time{12, 0, 0}})
-	populateDB(db)
+	command := flag.Arg(0)
 
-	var start, end, activity string
+	switch command {
+	case "start":
+		if len(flag.Args()) < 2 {
+			panic("Too few arguments provided for command \"start\"")
+		}
+		action := flag.Arg(1)
+		if len(action) == 0 {
+			log.Fatalf("Invalid action: %v", action)
+		}
+		startAction(ctx, client, action)
 
-	row, err := db.Query(`select * from times`)
+	case "stop":
+		stopActiveAction(ctx, client)
+
+	case "list":
+		retrieveTimes(ctx, client)
+
+	case "clean":
+		cleanTimes(ctx, client)
+
+	case "count":
+		if len(flag.Args()) < 2 {
+			panic("Too few arguments provided for command \"count\"")
+		}
+		action := flag.Arg(1)
+		countTime(ctx, client, action)
+
+	case "delete":
+		if len(flag.Args()) < 2 {
+			panic("Too few arguments provided for command \"count\"")
+		}
+		action := flag.Arg(1)
+		deleteAction(ctx, client, action)
+
+	default:
+		flag.Usage()
+		panic("Invalid command")
+	}
+}
+
+func cleanTimes(ctx context.Context, client *firestore.Client) {
+	iter := client.Collection("times").Documents(ctx)
+	batch := client.Batch()
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			log.Fatalf("Failed to get document: %v", err)
+		}
+
+		batch.Delete(doc.Ref)
+	}
+
+	_, err := batch.Commit(ctx)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("Failed to commit batch %v", err)
 	}
-	for row.Next() {
-		row.Scan(&start, &end, &activity)
-		fmt.Println(start, end, activity)
+}
+
+func retrieveTimes(ctx context.Context, client *firestore.Client) {
+	iter := client.Collection("times").Documents(ctx)
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			log.Fatalf("Failed to retrieve collection: %v", err)
+		}
+
+		var timeslot Timeslot
+		err = doc.DataTo(&timeslot)
+		if err != nil {
+			log.Fatalf("Failed to write data to timeslot: %v", err)
+		}
+		fmt.Println(timeslot)
+	}
+}
+
+func stopActiveAction(ctx context.Context, client *firestore.Client) {
+	var timeslot Timeslot
+	doc, err := client.Collection("times").Doc("active_action").Get(ctx)
+	if err != nil {
+		return
+		log.Fatalf("Failed to retrieve active action: %v", err)
+	}
+	_, err = client.Collection("times").Doc("active_action").Delete(ctx)
+	if err != nil {
+		log.Fatalf("Failed to delete active_time: %v", err)
 	}
 
-	t := time.Now()
-	fmt.Println(t)
+	err = doc.DataTo(&timeslot)
+	if err != nil {
+		log.Fatalf("Failed to write to timeslot: %v", err)
+	}
+	timeslot.EndTime = time.Now()
+
+	_, _, err = client.Collection("times").Add(ctx, timeslot)
+	if err != nil {
+		log.Fatalf("Failed to add active action: %v", err)
+	}
+}
+
+func startAction(ctx context.Context, client *firestore.Client, action string) {
+	stopActiveAction(ctx, client)
+
+	timeslot := Timeslot{
+		StartTime: time.Now(),
+		Activity:  action,
+	}
+	_, err := client.Collection("times").Doc("active_action").Set(ctx, timeslot)
+	if err != nil {
+		log.Fatalf("Failed to set active action: %v", err)
+	}
+}
+
+func countTime(ctx context.Context, client *firestore.Client, action string) {
+	var timeslot Timeslot
+	iter := client.Collection("times").Where("activity", "==", action).Documents(ctx)
+	cummTime := time.Duration(0)
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			log.Fatalf("Failed to read activity: %v", err)
+		}
+
+		doc.DataTo(&timeslot)
+		if timeslot.EndTime.Before(timeslot.StartTime) {
+			continue
+		}
+		cummTime += timeslot.EndTime.Sub(timeslot.StartTime)
+	}
+
+	fmt.Printf("Time spent on \"%v\": %v\n", action, cummTime)
+}
+
+func deleteAction(ctx context.Context, client *firestore.Client, action string) {
+	iter := client.Collection("times").Where("activity", "==", action).Documents((ctx))
+	batch := client.Batch()
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			log.Fatalf("Failed to read timeslot: %v", err)
+		}
+
+		batch.Delete(doc.Ref)
+	}
+
+	_, err := batch.Commit(ctx)
+	if err != nil {
+		log.Fatalf("Failed to commit batch deletion: %v", err)
+	}
 }
