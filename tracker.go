@@ -37,7 +37,6 @@ func main() {
 	defer client.Close()
 
 	flag.Parse()
-	fmt.Printf("Number of unused arguments: %v\n", flag.NArg())
 	if len(flag.Args()) < 1 {
 		panic("Too few arguments provided")
 	}
