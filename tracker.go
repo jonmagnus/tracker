@@ -1,12 +1,13 @@
 package main
 
 import (
-	"cloud.google.com/go/firestore"
 	"context"
 	"flag"
 	"fmt"
 	"log"
 	"time"
+
+	"cloud.google.com/go/firestore"
 
 	firebase "firebase.google.com/go"
 	"google.golang.org/api/iterator"
@@ -58,7 +59,19 @@ func main() {
 		stopActiveAction(ctx, client)
 
 	case "list":
-		retrieveTimes(ctx, client)
+		if len(flag.Args()) < 2 {
+			retrieveTimes(ctx, client)
+		} else {
+			now := time.Now()
+			switch flag.Arg(1) {
+			case "day":
+				listAfter(ctx, client, time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()))
+			case "month":
+				listAfter(ctx, client, time.Date(now.Year(), now.Month(), 0, 0, 0, 0, 0, now.Location()))
+			default:
+				panic(fmt.Sprintf("Invalid list option %s", flag.Arg(1)))
+			}
+		}
 
 	case "clean":
 		cleanTimes(ctx, client)
@@ -67,8 +80,49 @@ func main() {
 		if len(flag.Args()) < 2 {
 			panic("Too few arguments provided for command \"count\"")
 		}
+		now := time.Now()
 		action := flag.Arg(1)
-		countTime(ctx, client, action)
+		if len(flag.Args()) < 3 {
+			stime := time.Date(
+				now.Year(),
+				now.Month(),
+				now.Day(), 0, 0, 0, 0,
+				now.Location(),
+			)
+			countAfter(ctx, client, action, stime)
+		} else {
+			var offset int
+			if len(flag.Args()) > 3 {
+				if _, err := fmt.Sscanf(flag.Arg(3), "%d", &offset); err != nil {
+					log.Println(err)
+					panic("Offset must be an integer value")
+				}
+			} else {
+				offset = 0
+			}
+			switch {
+			case flag.Arg(2) == "day":
+				stime := time.Date(
+					now.Year(),
+					now.Month(),
+					now.Day(), 0, 0, 0, 0,
+					now.Location(),
+				).AddDate(0, 0, offset)
+				countAfter(ctx, client, action, stime)
+			case flag.Arg(2) == "month":
+				stime := time.Date(
+					now.Year(),
+					now.Month(),
+					0, 0, 0, 0, 0,
+					now.Location(),
+				).AddDate(0, offset, 0)
+				countAfter(ctx, client, action, stime)
+			case flag.Arg(2) == "all":
+				countTime(ctx, client, action)
+			default:
+				panic("Invalid argument")
+			}
+		}
 
 	case "delete":
 		if len(flag.Args()) < 2 {
@@ -159,29 +213,6 @@ func startAction(ctx context.Context, client *firestore.Client, action string) {
 	if err != nil {
 		log.Fatalf("Failed to set active action: %v", err)
 	}
-}
-
-func countTime(ctx context.Context, client *firestore.Client, action string) {
-	var timeslot Timeslot
-	iter := client.Collection("times").Where("activity", "==", action).Documents(ctx)
-	cummTime := time.Duration(0)
-	for {
-		doc, err := iter.Next()
-		if err == iterator.Done {
-			break
-		}
-		if err != nil {
-			log.Fatalf("Failed to read activity: %v", err)
-		}
-
-		doc.DataTo(&timeslot)
-		if timeslot.EndTime.Before(timeslot.StartTime) {
-			continue
-		}
-		cummTime += timeslot.EndTime.Sub(timeslot.StartTime)
-	}
-
-	fmt.Printf("Time spent on \"%v\": %v\n", action, cummTime)
 }
 
 func deleteAction(ctx context.Context, client *firestore.Client, action string) {
