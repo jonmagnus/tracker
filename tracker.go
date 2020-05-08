@@ -82,8 +82,6 @@ func main() {
 			stime = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
 			stime = stime.AddDate(0, offset, 0)
 			etime = stime.AddDate(0, 1, 0)
-			fmt.Println(stime.String())
-			fmt.Println(etime.String())
 			reportInterval(ctx, client, stime, etime)
 		}
 
