@@ -14,6 +14,7 @@ import (
 func reportInterval(ctx context.Context, client *firestore.Client, stime time.Time, etime time.Time) {
 	iter := client.Collection("times").Where("end_time", ">=", stime).Where("end_time", "<=", etime).Documents(ctx)
 	days := make(map[string]time.Duration)
+	activities := make(map[string]time.Duration)
 
 	for {
 		doc, err := iter.Next()
@@ -36,6 +37,12 @@ func reportInterval(ctx context.Context, client *firestore.Client, stime time.Ti
 		} else {
 			days[key] = timeslot.Duration()
 		}
+
+		if duration, ok := activities[timeslot.Activity]; ok {
+			activities[timeslot.Activity] = duration + timeslot.Duration()
+		} else {
+			activities[timeslot.Activity] = timeslot.Duration()
+		}
 	}
 
 	keys := make([]string, 0)
@@ -45,5 +52,9 @@ func reportInterval(ctx context.Context, client *firestore.Client, stime time.Ti
 	sort.Strings(keys)
 	for _, k := range keys {
 		fmt.Printf("%s: %v\n", k, days[k])
+	}
+	fmt.Println("----------")
+	for k, duration := range activities {
+		fmt.Printf("%s: %v\n", k, duration)
 	}
 }
