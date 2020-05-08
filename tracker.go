@@ -13,16 +13,6 @@ import (
 	"google.golang.org/api/iterator"
 )
 
-type Timeslot struct {
-	StartTime time.Time `firestore:"start_time"`
-	EndTime   time.Time `firestore:"end_time"`
-	Activity  string    `firestore:"activity"`
-}
-
-func (t Timeslot) String() string {
-	return fmt.Sprintf("%v - %v: %v", t.StartTime, t.EndTime, t.Activity)
-}
-
 func main() {
 	ctx := context.Background()
 	conf := &firebase.Config{ProjectID: "go-time-tracker-882c1"}
@@ -73,8 +63,34 @@ func main() {
 			}
 		}
 
-	case "clean":
-		cleanTimes(ctx, client)
+	case "report":
+		now := time.Now()
+		stime := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+		etime := now.AddDate(100, 0, 0)
+		if len(flag.Args()) < 2 {
+			reportInterval(ctx, client, stime, etime)
+		} else {
+			var offset int
+			if len(flag.Args()) > 1 {
+				if _, err := fmt.Sscanf(flag.Arg(1), "%d", &offset); err != nil {
+					log.Println(err)
+					panic("Offset must be an integer value")
+				}
+			} else {
+				offset = 0
+			}
+			stime = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+			stime = stime.AddDate(0, offset, 0)
+			etime = stime.AddDate(0, 1, 0)
+			fmt.Println(stime.String())
+			fmt.Println(etime.String())
+			reportInterval(ctx, client, stime, etime)
+		}
+
+	/*
+		case "clean":
+			cleanTimes(ctx, client)
+	*/
 
 	case "count":
 		if len(flag.Args()) < 2 {
@@ -182,7 +198,6 @@ func stopActiveAction(ctx context.Context, client *firestore.Client) {
 	var timeslot Timeslot
 	doc, err := client.Collection("times").Doc("active_action").Get(ctx)
 	if err != nil {
-		return
 		log.Fatalf("Failed to retrieve active action: %v", err)
 	}
 	_, err = client.Collection("times").Doc("active_action").Delete(ctx)
