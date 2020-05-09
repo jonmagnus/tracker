@@ -11,6 +11,8 @@ import (
 
 	firebase "firebase.google.com/go"
 	"google.golang.org/api/iterator"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func main() {
@@ -195,6 +197,9 @@ func retrieveTimes(ctx context.Context, client *firestore.Client) {
 func stopActiveAction(ctx context.Context, client *firestore.Client) {
 	var timeslot Timeslot
 	doc, err := client.Collection("times").Doc("active_action").Get(ctx)
+	if status.Code(err) == codes.NotFound {
+		return
+	}
 	if err != nil {
 		log.Fatalf("Failed to retrieve active action: %v", err)
 	}

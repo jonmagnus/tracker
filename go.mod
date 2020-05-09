@@ -10,4 +10,5 @@ require (
 	github.com/lib/pq v1.3.0
 	golang.org/x/oauth2 v0.0.0-20200107190931-bf48bf16ab8d // indirect
 	google.golang.org/api v0.17.0
+	google.golang.org/grpc v1.27.0
 )
