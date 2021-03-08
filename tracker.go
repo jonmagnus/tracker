@@ -233,6 +233,7 @@ func startAction(ctx context.Context, client *firestore.Client, action string) {
 	}
 }
 
+// TODO: This should only delete the last one, or some smaller collection of activities.
 func deleteAction(ctx context.Context, client *firestore.Client, action string) {
 	iter := client.Collection("times").Where("activity", "==", action).Documents((ctx))
 	batch := client.Batch()
